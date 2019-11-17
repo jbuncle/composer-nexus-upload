@@ -1,0 +1,11 @@
+{
+    "name": "jbuncle/composer-nexus-upload",
+    "bin": ["nexus-upload.php"],
+    "authors": [
+        {
+            "name": "James Buncle",
+            "email": "jbuncle@hotmail.com"
+        }
+    ],
+    "require": {}
+}
