@@ -15,7 +15,7 @@ docker run -it -v $(pwd):/workspace jbuncle/composer-nexus-upload:latest nexus-u
 ### Inline Bash
 
 ```bash
-php <(curl -s https://gist.githubusercontent.com/jbuncle/8e479343cfeb785046e3c6fe1a73dcce/raw/nexus-upload.php) \
+php <(curl -s https://raw.githubusercontent.com/jbuncle/composer-nexus-upload/master/nexus-upload.php) \
          --repository=https://example.nexus.repo.com/repository/composer-repo/ \
          --username=publisher-user \
          --password=$NEXUS_PASS \
