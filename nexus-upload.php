@@ -6,13 +6,12 @@
 
 /**
  * 
- * @param type $path
- * @param type $ignoreList
+ * @param string $path
+ * @param array $ignoreList
+ *
  * @return boolean
  */
 function isIgnorebale($path, $ignoreList) {
-
-
     foreach ($ignoreList as $pattern) {
         if (preg_match($pattern, $path)) {
             return true;
@@ -74,17 +73,14 @@ function curlPutFile($url, $filename, $username, $password) {
     curl_setopt($ch, CURLOPT_INFILE, $filestream);
     curl_setopt($ch, CURLOPT_INFILESIZE, filesize($filename));
 
+    // Enable headers
+    curl_setopt($ch, CURLOPT_HEADER, 1);
+
     $result = curl_exec($ch);
+    $lines = explode("\n", $result);
     curl_close($ch);
-    return $result !== false;
+    return trim($lines[0]) === 'HTTP/2 200';
 }
-
-function getPackageName($projectUrl) {
-    return getComposerJson($projectUrl)['name'];
-}
-
-$projectDir = getcwd();
-$packageName = getPackageName($projectDir);
 
 /**
  * Get composer JSON Object
@@ -93,49 +89,42 @@ $packageName = getPackageName($projectDir);
  *
  * @return array
  */
-function getComposerJson($projectUrl) {
+function getComposerJson() {
     static $composerJsons;
     if (!isset($composerJson)) {
-        $composerJsons = [];
-    }
-    if (!array_key_exists($projectUrl, $composerJsons)) {
-        $composerJsonPath = $projectUrl . '/composer.json';
-
+        $composerJsonPath = getcwd() . '/composer.json';
         $fileContents = file_get_contents($composerJsonPath);
         $composerJson = \json_decode($fileContents, true);
-
-        $composerJsons[$projectUrl] = $composerJson;
     }
 
-    return $composerJsons[$projectUrl];
+    return $composerJson;
 }
 
-function getComposerOption($projectUrl, $option) {
+function getComposerOptions() {
 
-    $json = getComposerJson($projectUrl);
+    $json = getComposerJson();
 
     if (!isset($json['extra'])) {
-        return null;
+        return [];
     }
     if (!isset($json['extra']['nexus-upload'])) {
-        return null;
+        return [];
     }
 
-    if (!isset($json['extra']['nexus-upload'][$option])) {
-        return null;
+    if (!isset($json['extra']['nexus-upload'])) {
+        return [];
     }
-    return $json['extra']['nexus-upload'][$option];
+    return $json['extra']['nexus-upload'];
 }
 
 /**
  * Get option from CLI.
  *
  * @staticvar array $options
- * @param array<string> $option
  *
  * @return string
  */
-function getCliOption($option) {
+function getCliOptions() {
     static $options;
     if (!isset($options)) {
         // Followed by single colon = required
@@ -145,36 +134,66 @@ function getCliOption($option) {
                 [
                     'repository:',
                     'username:',
-                    'password:',
+                    'password::',
                     'version:',
                     'ignore:',
                 ]
         );
     }
 
-    if (array_key_exists($option, $options)) {
-        return $options[$option];
-    } else {
+    return $options;
+}
+
+function getProperties() {
+    $filepath = getcwd() . DIRECTORY_SEPARATOR . ".nexus";
+    if (!file_exists($filepath)) {
+        return [];
+    }
+    $contents = file_get_contents($filepath);
+
+    $lines = explode("\n", $contents);
+
+    $options = [];
+    foreach ($lines as $line) {
+        $ltrimmed = ltrim($line);
+        if (strpos($ltrimmed, '#') === 0) {
+            continue;
+        }
+        $rtrimmed = rtrim($ltrimmed, "\r\n");
+        $parts = explode('=', $rtrimmed, 2);
+        $options[trim($parts[0])] = $parts[1];
+    }
+    return $options;
+}
+
+function getOption($option) {
+    static $options;
+    if (!isset($options)) {
+        $cliOptions = getCliOptions();
+        $composerOptions = getComposerOptions();
+        $properties = getProperties();
+
+        $options = array_merge(
+                $properties,
+                $composerOptions,
+                $cliOptions
+        );
+    }
+    if (!array_key_exists($option, $options)) {
         return null;
     }
+
+    return $options[$option];
 }
 
-function getOption($projectUrl, $option) {
-    $cliOption = getCliOption($option);
-    if ($cliOption !== null) {
-        return $cliOption;
-    } else {
-        return getComposerOption($projectUrl, $option);
-    }
-}
+$packageName = getComposerJson()['name'];
+$nexusRepo = getOption('repository');
+$username = getOption('username');
+$password = getOption('password');
+$version = getOption('version');
+$ignore = getOption('ignore');
 
-$nexusRepo = getOption($projectDir, 'repository');
-$username = getOption($projectDir, 'username');
-$password = getOption($projectDir, 'password');
-$version = getOption($projectDir, 'version');
-$ignore = getOption($projectDir, 'ignore');
-
-$stdIgnore = "/^(\.git|vendor|composer\.lock|\.gitignore)/";
+$stdIgnore = "/^(\.git|vendor|composer\.lock|\.gitignore|\.nexus)/";
 if (is_array($ignore)) {
     $ignore[] = $stdIgnore;
 } else {
@@ -219,9 +238,10 @@ if (empty($version)) {
     exit();
 }
 
-$zipFileName = getcwd() . DIRECTORY_SEPARATOR . str_replace('/', '-', $packageName) . '-' . $version . '.zip';
+$projectDir = getcwd();
+$zipFileName = $projectDir . DIRECTORY_SEPARATOR . str_replace('/', '-', $packageName) . '-' . $version . '.zip';
 
-echo "Zipping '$projectDir' as '$zipFileName'\n";
+echo "Zipping '{$projectDir}' as '$zipFileName'\n";
 zipDirectory($projectDir, $zipFileName, function($path) use ($ignoreList) {
     if (isIgnorebale($path, $ignoreList)) {
         return false;
