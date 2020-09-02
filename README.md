@@ -1,5 +1,7 @@
 # Composer Nexus Upload/Push
 
+Simple PHP Script and Docker Image for uploading composer packages to a Nexus Respository.
+
 ## Usage
 
 ### Docker
