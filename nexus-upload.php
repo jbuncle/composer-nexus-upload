@@ -77,8 +77,16 @@ function curlPutFile($url, $filename, $username, $password) {
     curl_setopt($ch, CURLOPT_HEADER, 1);
 
     $result = curl_exec($ch);
+
     $lines = explode("\n", $result);
+    $statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
     curl_close($ch);
+
+    if ($statusCode !== 200) {
+        throw new Exception("Failed to PUT file with response code $statusCode - '$result'");
+    }
+    
     return trim($lines[0]) === 'HTTP/2 200';
 }
 
@@ -263,7 +271,7 @@ if (filesize($zipFileName) === 0) {
 $success = curlPutFile($url, $zipFileName, $username, $password);
 if (!$success) {
     echo "Failed to upload zip to repository\n";
-    die();
+    exit(1);
 } else {
     echo "Finished\n";
 }
