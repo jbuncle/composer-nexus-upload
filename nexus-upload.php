@@ -119,9 +119,6 @@ function getComposerOptions() {
         return [];
     }
 
-    if (!isset($json['extra']['nexus-upload'])) {
-        return [];
-    }
     return $json['extra']['nexus-upload'];
 }
 
