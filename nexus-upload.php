@@ -1,17 +1,19 @@
 #!/usr/bin/env php
 <?php
-/**
- * PHP Script to upload/push a composer project to a Nexus Repository Manager (that supports composer).
- */
+
+const RESET = "\033[0m";
+const RED = "\033[1;31m";
+const GREEN = "\033[1;32m";
+const YELLOW = "\033[1;33m";
+const BLUE = "\033[1;34m";
 
 /**
- * 
  * @param string $path
  * @param array $ignoreList
- *
- * @return boolean
+ * @return bool
  */
-function isIgnorebale($path, $ignoreList) {
+function isIgnorebale($path, $ignoreList): bool
+{
     foreach ($ignoreList as $pattern) {
         if (preg_match($pattern, $path)) {
             return true;
@@ -20,258 +22,216 @@ function isIgnorebale($path, $ignoreList) {
     return false;
 }
 
-/**
- * 
- * @param string   $directory
- * @param string   $zipPath
- * @param callable $fileFilter
- */
-function zipDirectory($directory, $zipPath, $fileFilter) {
-    // Get real path for our folder
+function zipDirectory(string $directory, string $zipPath, callable $fileFilter): void
+{
     $rootRealPath = realpath($directory);
-
-    // Initialize archive object
     $zipArchive = new ZipArchive();
-
     $zipArchive->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE);
 
-    /** @var SplFileInfo[] $files */
     $files = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($rootRealPath),
-            RecursiveIteratorIterator::LEAVES_ONLY
+        new RecursiveDirectoryIterator($rootRealPath),
+        RecursiveIteratorIterator::LEAVES_ONLY
     );
 
     foreach ($files as $file) {
-        if ($file->isDir()) {
-            // Skip directories (they would be added automatically)
-            continue;
-        }
+        if ($file->isDir()) continue;
 
         $realpath = $file->getRealPath();
         $relativePath = substr($realpath, strlen($rootRealPath) + 1);
 
-        // Decide whether file should be included
-        if (\call_user_func($fileFilter, $relativePath)) {
+        if ($fileFilter($relativePath)) {
             $zipArchive->addFile($realpath, $relativePath);
+            echo BLUE . "Adding: $relativePath" . RESET . PHP_EOL;
         }
     }
+
     $zipArchive->close();
 }
 
-function curlPutFile($url, $filename, $username, $password) {
+function curlPutFile(string $url, string $filename, string $username, string $password): bool
+{
+    echo YELLOW . "Preparing HTTP PUT request...\n" . RESET;
+    echo "\tURL:        $url\n";
+    echo "\tFile:       $filename\n";
+    echo "\tSize:       " . filesize($filename) . " bytes\n";
+    echo "\tUsername:   $username\n\n";
+
     $filestream = fopen($filename, "rb");
 
     $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 2);
-    curl_setopt($ch, CURLOPT_HEADER, false);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-    curl_setopt($ch, CURLOPT_BINARYTRANSFER, 1);
-    curl_setopt($ch, CURLOPT_USERPWD, $username . ":" . $password);
 
-    curl_setopt($ch, CURLOPT_PUT, 1);
-    curl_setopt($ch, CURLOPT_INFILE, $filestream);
-    curl_setopt($ch, CURLOPT_INFILESIZE, filesize($filename));
+    curl_setopt_array($ch, [
+        CURLOPT_URL            => $url,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_BINARYTRANSFER => true,
+        CURLOPT_USERPWD        => "$username:$password",
+        CURLOPT_PUT            => true,
+        CURLOPT_INFILE         => $filestream,
+        CURLOPT_INFILESIZE     => filesize($filename),
+        CURLOPT_HEADER         => true,
+    ]);
 
-    // Enable headers
-    curl_setopt($ch, CURLOPT_HEADER, 1);
+    $response = curl_exec($ch);
 
-    $result = curl_exec($ch);
+    if ($response === false) {
+        $error = curl_error($ch);
+        $errno = curl_errno($ch);
+        curl_close($ch);
+        echo RED . "cURL Error ($errno): $error\n" . RESET;
+        return false;
+    }
 
-    $lines = explode("\n", $result);
+    $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
     $statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-
+    $headers = substr($response, 0, $headerSize);
+    $body = substr($response, $headerSize);
     curl_close($ch);
 
-    if ($statusCode !== 200) {
-        throw new Exception("Failed to PUT file with response code $statusCode - '$result'");
+    echo BLUE . "Response Status: HTTP $statusCode\n" . RESET;
+    echo BLUE . "Response Headers:\n" . RESET;
+    foreach (explode("\n", trim($headers)) as $headerLine) {
+        echo "\t$headerLine\n";
     }
-    
-    return trim($lines[0]) === 'HTTP/2 200';
+
+    // Print short body summary
+    $trimmedBody = trim($body);
+    if ($trimmedBody !== '') {
+        echo BLUE . "Response Body (first 500 chars):\n" . RESET;
+        echo substr($trimmedBody, 0, 500) . (strlen($trimmedBody) > 500 ? "..." : "") . "\n";
+    } else {
+        echo BLUE . "Response Body: (empty)\n" . RESET;
+    }
+
+    if ($statusCode !== 200) {
+        echo RED . "Upload failed: HTTP $statusCode\n" . RESET;
+        return false;
+    }
+
+    echo GREEN . "Upload succeeded with HTTP $statusCode\n" . RESET;
+    return true;
 }
 
-/**
- * Get composer JSON Object
- * @staticvar array<stdClass> $composerJsons
- * @param string $projectUrl
- *
- * @return array
- */
-function getComposerJson() {
-    static $composerJsons;
+function getComposerJson(): array
+{
+    static $composerJson;
     if (!isset($composerJson)) {
-        $composerJsonPath = getcwd() . '/composer.json';
-        $fileContents = file_get_contents($composerJsonPath);
-        $composerJson = \json_decode($fileContents, true);
+        $path = getcwd() . '/composer.json';
+        $composerJson = json_decode(file_get_contents($path), true);
     }
-
     return $composerJson;
 }
 
-function getComposerOptions() {
-
-    $json = getComposerJson();
-
-    if (!isset($json['extra'])) {
-        return [];
-    }
-    if (!isset($json['extra']['nexus-upload'])) {
-        return [];
-    }
-
-    if (!isset($json['extra']['nexus-upload'])) {
-        return [];
-    }
-    return $json['extra']['nexus-upload'];
+function getComposerOptions(): array
+{
+    return getComposerJson()['extra']['nexus-upload'] ?? [];
 }
 
-/**
- * Get option from CLI.
- *
- * @staticvar array $options
- *
- * @return string
- */
-function getCliOptions() {
+function getCliOptions(): array
+{
     static $options;
     if (!isset($options)) {
-        // Followed by single colon = required
-        // Followed by double colon = optional
-        $options = getopt(
-                '',
-                [
-                    'repository:',
-                    'username:',
-                    'password::',
-                    'version:',
-                    'ignore:',
-                ]
-        );
+        $options = getopt('', [
+            'repository:',
+            'username:',
+            'password::',
+            'version:',
+            'ignore:',
+        ]);
     }
-
     return $options;
 }
 
-function getProperties() {
-    $filepath = getcwd() . DIRECTORY_SEPARATOR . ".nexus";
-    if (!file_exists($filepath)) {
-        return [];
-    }
-    $contents = file_get_contents($filepath);
+function getProperties(): array
+{
+    $path = getcwd() . '/.nexus';
+    if (!file_exists($path)) return [];
 
-    $lines = explode("\n", $contents);
-
+    $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
     $options = [];
+
     foreach ($lines as $line) {
-        $ltrimmed = ltrim($line);
-        if (strpos($ltrimmed, '#') === 0) {
-            continue;
-        }
-        $rtrimmed = rtrim($ltrimmed, "\r\n");
-        $parts = explode('=', $rtrimmed, 2);
-        $options[trim($parts[0])] = $parts[1];
+        $line = trim($line);
+        if (str_starts_with($line, '#')) continue;
+
+        [$key, $value] = explode('=', $line, 2);
+        $options[trim($key)] = trim($value);
     }
+
     return $options;
 }
 
-function getOption($option) {
+function getOption(string $option): mixed
+{
     static $options;
     if (!isset($options)) {
-        $cliOptions = getCliOptions();
-        $composerOptions = getComposerOptions();
-        $properties = getProperties();
-
         $options = array_merge(
-                $properties,
-                $composerOptions,
-                $cliOptions
+            getProperties(),
+            getComposerOptions(),
+            getCliOptions()
         );
     }
-    if (!array_key_exists($option, $options)) {
-        return null;
-    }
-
-    return $options[$option];
+    return $options[$option] ?? null;
 }
+
+// === Main Execution ===
 
 $packageName = getComposerJson()['name'];
-$nexusRepo = getOption('repository');
-$username = getOption('username');
-$password = getOption('password');
-$version = getOption('version');
-$ignore = getOption('ignore');
+$nexusRepo   = getOption('repository');
+$username    = getOption('username');
+$password    = getOption('password');
+$version     = getOption('version');
+$ignore      = getOption('ignore');
 
 $stdIgnore = "/^(\.git|vendor|composer\.lock|\.gitignore|\.nexus)/";
-if (is_array($ignore)) {
-    $ignore[] = $stdIgnore;
-} else {
-    $ignore = [
-        $stdIgnore, // Standard PHP ignores
-        $ignore
-    ];
-}
+$ignore = is_array($ignore) ? [...$ignore, $stdIgnore] : [$ignore, $stdIgnore];
 
+$ignoreList = array_filter(array_map(function ($pattern) {
+    if ($pattern === null) return false;
+    if (str_starts_with($pattern, '/')) return $pattern;
 
-// Process
-$ignoreList = array_map(function($value) {
-    if ($value === null) {
-        return false;
-    }
-    if (strpos($value, '/') !== 0) {
-        // Quote the string
-        $value = preg_quote($value);
-        // Escape slashes
-        $value = str_replace('/', '\/', $value);
-        // Allow * wildcards
-        $value = str_replace('\*', '.*', $value);
+    $pattern = str_replace(['*', '/'], ['.*', '\/'], preg_quote($pattern));
+    return '/^' . $pattern . '/';
+}, $ignore));
 
-        return '/^' . $value . '/';
-    } else {
-        return $value;
-    }
-}, $ignore);
-
-$ignoreList = array_filter($ignoreList);
-
-echo "Running with:\n";
-echo "\tRepository:          $nexusRepo\n";
-echo "\tUsername:            $username\n";
-echo "\tPassword:            " . (!empty($password)) ? '(provided)' : 'missing' . "\n";
-echo "\tVersion:             $version\n";
-echo "\tIgnore patterns:     " . implode(', ', $ignoreList) . "\n";
-echo "\n";
+// Summary
+echo YELLOW . "Running with:\n" . RESET;
+echo "\tRepository:      $nexusRepo\n";
+echo "\tUsername:        $username\n";
+echo "\tPassword:        " . (!empty($password) ? '(provided)' : 'missing') . "\n";
+echo "\tVersion:         $version\n";
+echo "\tIgnore patterns: " . implode(', ', $ignoreList) . "\n\n";
 
 if (empty($version)) {
-    echo "Version is empty\n";
-    exit();
-}
-
-$projectDir = getcwd();
-$zipFileName = $projectDir . DIRECTORY_SEPARATOR . str_replace('/', '-', $packageName) . '-' . $version . '.zip';
-
-echo "Zipping '{$projectDir}' as '$zipFileName'\n";
-zipDirectory($projectDir, $zipFileName, function($path) use ($ignoreList) {
-    if (isIgnorebale($path, $ignoreList)) {
-        return false;
-    }
-    echo "Adding '" . $path . "' \n";
-    return true;
-});
-
-echo "Created '$zipFileName' (" . filesize($zipFileName) . " bytes)\n";
-
-$url = $nexusRepo . "packages/upload/" . $packageName . '/' . $version;
-
-echo "\n";
-echo "Uploading '$zipFileName' to '$url'\n";
-
-if (filesize($zipFileName) === 0) {
-    throw new Exception("Zip file is empty");
-}
-$success = curlPutFile($url, $zipFileName, $username, $password);
-if (!$success) {
-    echo "Failed to upload zip to repository\n";
+    echo RED . "Version is required.\n" . RESET;
     exit(1);
-} else {
-    echo "Finished\n";
+}
+
+$projectDir  = getcwd();
+$zipFileName = $projectDir . '/' . str_replace('/', '-', $packageName) . "-$version.zip";
+
+echo YELLOW . "Zipping project directory...\n" . RESET;
+zipDirectory($projectDir, $zipFileName, fn($path) => !isIgnorebale($path, $ignoreList));
+
+$filesize = filesize($zipFileName);
+echo GREEN . "Created: $zipFileName ($filesize bytes)\n" . RESET;
+
+if ($filesize === 0) {
+    echo RED . "Zip file is empty. Aborting.\n" . RESET;
+    exit(1);
+}
+
+$url = rtrim($nexusRepo, '/') . "/packages/upload/$packageName/$version";
+echo YELLOW . "Uploading to: $url\n" . RESET;
+
+try {
+    if (curlPutFile($url, $zipFileName, $username, $password)) {
+        echo GREEN . "Upload complete.\n" . RESET;
+    } else {
+        echo RED . "Upload failed.\n" . RESET;
+        exit(1);
+    }
+} catch (Exception $e) {
+    echo RED . "Error: " . $e->getMessage() . "\n" . RESET;
+    exit(1);
 }
