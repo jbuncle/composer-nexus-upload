@@ -2,9 +2,8 @@
 FROM php:8.0-cli
 
 # Install required system dependencies for ZIP and cURL extensions.
-# The libzip-dev package is needed to build the ZIP extension.
 RUN apt-get update && \
-    apt-get install -y libzip-dev && \
+    apt-get install -y libzip-dev libcurl4-openssl-dev && \
     docker-php-ext-install zip curl && \
     rm -rf /var/lib/apt/lists/*
 
