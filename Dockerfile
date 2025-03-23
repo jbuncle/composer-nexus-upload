@@ -1,11 +1,19 @@
-FROM ubuntu:20.04
+# Use the official PHP 8.0 CLI image
+FROM php:8.0-cli
 
-ENV DEBIAN_FRONTEND=noninteractive
+# Install required system dependencies for ZIP and cURL extensions.
+# The libzip-dev package is needed to build the ZIP extension.
+RUN apt-get update && \
+    apt-get install -y libzip-dev && \
+    docker-php-ext-install zip curl && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN apt-get update && apt-get install -y \
-        php php-curl php-zip \
-    && rm -rf /var/lib/apt/lists/*
-
-ADD nexus-upload.php /usr/bin/nexus-upload
+# Set the working directory
 WORKDIR /workspace
-CMD "nexus-upload"
+
+# Copy the nexus-upload script to a directory in the PATH and make it executable.
+COPY nexus-upload.php /usr/local/bin/nexus-upload
+RUN chmod +x /usr/local/bin/nexus-upload
+
+# Set the default command to run the script.
+CMD ["nexus-upload"]
