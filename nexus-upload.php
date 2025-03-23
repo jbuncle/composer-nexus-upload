@@ -161,8 +161,11 @@ function getProperties(): array
     return $options;
 }
 
-function getOption(string $option): mixed
-{
+/**
+ * @param string $option
+ * @return mixed
+ */
+function getOption(string $option) {
     static $options;
     if (!isset($options)) {
         $options = array_merge(
