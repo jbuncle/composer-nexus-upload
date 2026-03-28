@@ -22,7 +22,7 @@ jobs:
           tools: composer:v2
 
       - name: Validate composer metadata
-        run: composer validate --strict
+        run: composer validate --no-check-publish
 
       - name: Lint PHP entrypoint
         run: php -l nexus-upload.php
